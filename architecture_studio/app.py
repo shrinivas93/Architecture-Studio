@@ -19,6 +19,11 @@ import sys
 import time
 from urllib.parse import quote
 
+try:  # Preinstalled on Hugging Face Gradio Spaces (ZeroGPU); optional everywhere else.
+    import spaces
+except ImportError:
+    spaces = None
+
 import gradio as gr
 import pandas as pd
 from pydantic import ValidationError
@@ -447,17 +452,33 @@ def build_app() -> gr.Blocks:
     return demo
 
 
-def serve_single_port() -> None:
-    """Serve Gradio at / and the Marimo notebook at CAPACITY_MOUNT on one port."""
-    import marimo
-    import uvicorn
-    from fastapi import FastAPI
+if spaces is not None:
 
-    server = FastAPI()
+    @spaces.GPU(duration=1)
+    def zerogpu_placeholder() -> None:
+        """Never called. Free Gradio Spaces run on ZeroGPU, which only starts an app
+        that declares at least one @spaces.GPU function; everything here runs on CPU."""
+
+
+def serve_single_port() -> None:
+    """Serve Gradio at / and the Marimo notebook at CAPACITY_MOUNT on one port.
+
+    Starts through demo.launch() (which ZeroGPU hooks into), then mounts the notebook
+    ahead of Gradio's own routes on the same server.
+    """
+    import marimo
+    from starlette.routing import Mount
+
     notebook_app = marimo.create_asgi_app(quiet=True).with_app(path="", root=NOTEBOOK_PATH).build()
-    server.mount(CAPACITY_MOUNT, notebook_app)
-    server = gr.mount_gradio_app(server, build_app(), path="/", allowed_paths=[OUTPUT_DIR])
-    uvicorn.run(server, host=GRADIO_HOST, port=GRADIO_PORT)
+    demo = build_app()
+    demo.launch(
+        server_name=GRADIO_HOST,
+        server_port=GRADIO_PORT,
+        allowed_paths=[OUTPUT_DIR],
+        prevent_thread_lock=True,
+    )
+    demo.app.router.routes.insert(0, Mount(CAPACITY_MOUNT, app=notebook_app))
+    demo.block_thread()
 
 
 if __name__ == "__main__":

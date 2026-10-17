@@ -5,7 +5,7 @@ colorFrom: blue
 colorTo: purple
 sdk: gradio
 sdk_version: 6.30.0
-python_version: "3.11"
+python_version: "3.12"
 app_file: app.py
 pinned: false
 short_description: One system design to diagram, data, capacity and animation
@@ -109,9 +109,9 @@ docker compose up --build
 
 ## Deploy for free on Hugging Face Spaces
 
-The header at the top of this README is the Spaces configuration (`sdk: gradio`, `app_file: app.py`), and `packages.txt` lists the system packages Spaces installs with apt (Graphviz, ffmpeg, Cairo/Pango build dependencies). Docker Spaces are a paid option, so this deploys as a **Gradio** Space instead, which runs on the free **CPU Basic** hardware.
+The header at the top of this README is the Spaces configuration (`sdk: gradio`, `app_file: app.py`), and `packages.txt` lists the system packages Spaces installs with apt (Graphviz, ffmpeg, Cairo/Pango build dependencies). Docker Spaces are a paid option, and on a free account Gradio Spaces run on **ZeroGPU** hardware (CPU Basic needs PRO). So this deploys as a free Gradio Space on ZeroGPU. Hosting a ZeroGPU Space requires an account older than 30 days with a verified email; free accounts can host up to 2.
 
-1. Sign up at <https://huggingface.co>, then create a **New Space**: SDK **Gradio**, template **Blank**, hardware **CPU Basic** (free).
+1. Sign up at <https://huggingface.co>, then create a **New Space**: SDK **Gradio**, template **Blank**, hardware **ZeroGPU** (free).
 2. Create an access token with **write** permission under **Settings → Access Tokens**.
 3. Push the contents of this folder (not the repo root) to the Space, replacing the files the template created. Use your token as the password:
 
@@ -124,12 +124,14 @@ The header at the top of this README is the Spaces configuration (`sdk: gradio`,
 
 4. The first build takes several minutes. Then open `https://huggingface.co/spaces/<your-username>/<space-name>`.
 
+The app never uses the GPU; everything runs on the Space's CPU, so it consumes no ZeroGPU quota. ZeroGPU only starts apps that declare at least one `@spaces.GPU` function, so `app.py` declares a placeholder one (`zerogpu_placeholder`, never called) when the `spaces` package is available; Gradio Spaces have it preinstalled. ZeroGPU supports Python 3.10 and 3.12, hence `python_version: "3.12"`.
+
 On Spaces (detected through the `SPACE_ID` variable), the app listens on `0.0.0.0` and switches to single-port mode, because a Space exposes only port 7860. The Capacity Planner tab then embeds the notebook from `/capacity/?design=<file>` on the same server; only file names inside `designs/` are accepted there. LaTeX is not installed on Spaces; the animation does not need it, since all text is rendered with Pango. Free Spaces sleep after a period of inactivity and wake on the next visit, and their disk is not persistent, so saved designs and generated files disappear when the Space restarts.
 
 ## Implementation choices
 
 - **Manim invocation: Python API, no CLI.** `animation_gen.render_request_flow` builds a `Scene` subclass from the design. It renders it in-process with `scene.render()` inside `manim.tempconfig({...})`, using `quality="low_quality"` (equivalent to `-ql`) by default and `"high_quality"` (`-qh`) for `quality="high"`. Rendering happens in a temporary media directory, and the mp4 is then moved to the requested path. Manim's config is process-global, so a lock serialises concurrent renders. Text is rendered with Pango (`Text`), so a working render needs only Cairo, Pango and ffmpeg. The LaTeX packages are installed because they are part of Manim's standard dependency set.
-- **Capacity planner embedding: iframe *and* link.** The "Launch capacity planner" button first writes the current design to YAML: the file it was loaded from or last saved to, or `designs/<title>.yaml` if it has never been saved. It then starts `python -m marimo run capacity_notebook.py --host … --port 2718 --headless --no-token -- --design <path>` as a background subprocess. It waits for the port to open and renders a `gr.HTML` block containing an `<iframe>` of `MARIMO_PUBLIC_URL`, plus a clickable link to the same URL as a fallback. `marimo run` sends no `X-Frame-Options` header, so the iframe works. Clicking the button again restarts Marimo on the latest design. The subprocess is terminated when the app exits. In single-port mode (see below), Marimo is mounted in-process instead via `marimo.create_asgi_app()`, next to Gradio on one FastAPI/uvicorn server.
+- **Capacity planner embedding: iframe *and* link.** The "Launch capacity planner" button first writes the current design to YAML: the file it was loaded from or last saved to, or `designs/<title>.yaml` if it has never been saved. It then starts `python -m marimo run capacity_notebook.py --host … --port 2718 --headless --no-token -- --design <path>` as a background subprocess. It waits for the port to open and renders a `gr.HTML` block containing an `<iframe>` of `MARIMO_PUBLIC_URL`, plus a clickable link to the same URL as a fallback. `marimo run` sends no `X-Frame-Options` header, so the iframe works. Clicking the button again restarts Marimo on the latest design. The subprocess is terminated when the app exits. In single-port mode (see below), the app starts through `demo.launch()` as usual (ZeroGPU hooks into it), then mounts the notebook in-process via `marimo.create_asgi_app()` at `/capacity/` on the same server, ahead of Gradio's own routes.
 - **Diagram layout.** Services are added to a left-to-right (`direction="LR"`) Diagrams graph in `design.services` order. Clusters are created only for a kind that has more than 6 services; that kind gets one `Cluster`. A missing Graphviz `dot` executable raises `GraphvizNotInstalledError`, which tells you how to install it.
 - **Animation layout.** Boxes are placed left to right in topological order. Each service sits in a column given by its longest distance from an entry point, and services in the same column are stacked vertically so arrows never pass through boxes. Edges that point backwards (only possible in a cycle) are drawn as curved arrows. The animated path is found by a DFS from an entry point to a sink, preferring entry points that have outgoing connections.
 - **Capacity model** (`compute_capacity`): `total_rps = users × rpm / 60`, split equally across the entry points (services with no incoming connection). Traffic propagates in topological/BFS order. A service's incoming RPS is the sum of the RPS of every service with an edge into it, and every outgoing edge carries the full upstream RPS. Then `instances_needed = ceil(rps / max_throughput_rps)` and `monthly_cost_usd = instances × cost_per_hour_usd × 730`. In a cyclic design, services inside the cycle receive only the traffic arriving from outside it.
