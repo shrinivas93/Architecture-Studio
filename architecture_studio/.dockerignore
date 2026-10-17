@@ -1,0 +1,10 @@
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+output/diagrams/*.png
+output/testdata/*.db
+output/animations/*.mp4
+designs/*.yaml
+media

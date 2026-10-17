@@ -1,0 +1,14 @@
+services:
+  architecture-studio:
+    build: .
+    image: architecture-studio:latest
+    ports:
+      - "7860:7860"   # Gradio UI
+      - "2718:2718"   # Marimo capacity planner
+    environment:
+      GRADIO_SERVER_NAME: 0.0.0.0
+      MARIMO_HOST: 0.0.0.0
+      MARIMO_PUBLIC_URL: http://localhost:2718
+    volumes:
+      - ./designs:/app/designs
+      - ./output:/app/output
