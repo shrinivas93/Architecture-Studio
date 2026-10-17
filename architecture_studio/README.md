@@ -3,8 +3,10 @@ title: Architecture Studio
 emoji: 🏗️
 colorFrom: blue
 colorTo: purple
-sdk: docker
-app_port: 7860
+sdk: gradio
+sdk_version: 6.30.0
+python_version: "3.11"
+app_file: app.py
 pinned: false
 short_description: One system design to diagram, data, capacity and animation
 ---
@@ -26,7 +28,8 @@ architecture_studio/
 ├── test_end_to_end.py     # pytest acceptance test
 ├── designs/               # saved *.yaml designs
 ├── output/{diagrams,testdata,animations}/
-├── requirements.txt, Dockerfile, docker-compose.yml
+├── requirements.txt, packages.txt (apt packages for Hugging Face Spaces)
+├── Dockerfile, docker-compose.yml
 ```
 
 ## Local setup
@@ -97,7 +100,7 @@ docker compose up --build
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `GRADIO_SERVER_NAME` | `127.0.0.1` (`0.0.0.0` in Docker) | Gradio bind address |
+| `GRADIO_SERVER_NAME` | `127.0.0.1` (`0.0.0.0` in Docker and on Spaces) | Gradio bind address |
 | `GRADIO_SERVER_PORT` | `7860` | Gradio port |
 | `MARIMO_HOST` | `127.0.0.1` (`0.0.0.0` in Docker) | Marimo bind address |
 | `MARIMO_PORT` | `2718` | Marimo port |
@@ -106,11 +109,11 @@ docker compose up --build
 
 ## Deploy for free on Hugging Face Spaces
 
-The header at the top of this README (`sdk: docker`, `app_port: 7860`) is the Spaces configuration, so this folder deploys as-is.
+The header at the top of this README is the Spaces configuration (`sdk: gradio`, `app_file: app.py`), and `packages.txt` lists the system packages Spaces installs with apt (Graphviz, ffmpeg, Cairo/Pango build dependencies). Docker Spaces are a paid option, so this deploys as a **Gradio** Space instead, which runs on the free **CPU Basic** hardware.
 
-1. Sign up at <https://huggingface.co>, then create a **New Space**: SDK **Docker**, template **Blank**, hardware **CPU basic (free)**.
+1. Sign up at <https://huggingface.co>, then create a **New Space**: SDK **Gradio**, template **Blank**, hardware **CPU Basic** (free).
 2. Create an access token with **write** permission under **Settings → Access Tokens**.
-3. Push the contents of this folder (not the repo root) to the Space. Use your token as the password:
+3. Push the contents of this folder (not the repo root) to the Space, replacing the files the template created. Use your token as the password:
 
    ```bash
    git clone https://huggingface.co/spaces/<your-username>/<space-name>
@@ -119,9 +122,9 @@ The header at the top of this README (`sdk: docker`, `app_port: 7860`) is the Sp
    git add -A && git commit -m "Deploy Architecture Studio" && git push
    ```
 
-4. The first build takes about 10–15 minutes (mostly LaTeX). Then open `https://huggingface.co/spaces/<your-username>/<space-name>`.
+4. The first build takes several minutes. Then open `https://huggingface.co/spaces/<your-username>/<space-name>`.
 
-On Spaces, the app switches to single-port mode by itself, because Spaces exposes only port 7860. The Capacity Planner tab then embeds the notebook from `/capacity/?design=<file>` on the same server; only file names inside `designs/` are accepted there. The image runs fine as the non-root user (uid 1000) that Spaces uses. Free Spaces sleep after a period of inactivity and wake on the next visit, and their disk is not persistent, so saved designs and generated files disappear when the Space restarts.
+On Spaces (detected through the `SPACE_ID` variable), the app listens on `0.0.0.0` and switches to single-port mode, because a Space exposes only port 7860. The Capacity Planner tab then embeds the notebook from `/capacity/?design=<file>` on the same server; only file names inside `designs/` are accepted there. LaTeX is not installed on Spaces; the animation does not need it, since all text is rendered with Pango. Free Spaces sleep after a period of inactivity and wake on the next visit, and their disk is not persistent, so saved designs and generated files disappear when the Space restarts.
 
 ## Implementation choices
 

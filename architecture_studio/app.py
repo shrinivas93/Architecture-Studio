@@ -39,7 +39,9 @@ NOTEBOOK_PATH = os.path.join(BASE_DIR, "capacity_notebook.py")
 EXAMPLE_CHOICE = "(example design)"
 EMPTY_CHOICE = "(new empty design)"
 
-GRADIO_HOST = os.environ.get("GRADIO_SERVER_NAME", "127.0.0.1")
+# Hugging Face Spaces sets SPACE_ID; there the app must listen on all interfaces.
+ON_SPACES = bool(os.environ.get("SPACE_ID"))
+GRADIO_HOST = os.environ.get("GRADIO_SERVER_NAME", "0.0.0.0" if ON_SPACES else "127.0.0.1")
 GRADIO_PORT = int(os.environ.get("GRADIO_SERVER_PORT", "7860"))
 MARIMO_HOST = os.environ.get("MARIMO_HOST", "127.0.0.1")
 MARIMO_PORT = int(os.environ.get("MARIMO_PORT", "2718"))
@@ -48,9 +50,7 @@ MARIMO_PUBLIC_URL = os.environ.get("MARIMO_PUBLIC_URL", f"http://localhost:{MARI
 # Single-port mode serves the Marimo notebook in-process at CAPACITY_MOUNT on the
 # Gradio port, for hosts that expose only one port. It is on automatically on
 # Hugging Face Spaces (which sets SPACE_ID).
-SINGLE_PORT = os.environ.get("SINGLE_PORT", "").lower() in ("1", "true", "yes") or bool(
-    os.environ.get("SPACE_ID")
-)
+SINGLE_PORT = os.environ.get("SINGLE_PORT", "").lower() in ("1", "true", "yes") or ON_SPACES
 CAPACITY_MOUNT = "/capacity"
 
 # Manim configures root logging at INFO; keep Gradio's HTTP client quiet.
