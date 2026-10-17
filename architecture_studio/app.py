@@ -8,6 +8,7 @@ Capacity Planner (Marimo) and Animation (Manim).
 from __future__ import annotations
 
 import atexit
+import html
 import logging
 import os
 import re
@@ -16,6 +17,7 @@ import socket
 import subprocess
 import sys
 import time
+from urllib.parse import quote
 
 import gradio as gr
 import pandas as pd
@@ -43,6 +45,13 @@ MARIMO_HOST = os.environ.get("MARIMO_HOST", "127.0.0.1")
 MARIMO_PORT = int(os.environ.get("MARIMO_PORT", "2718"))
 # URL the *browser* uses to reach Marimo (differs from MARIMO_HOST behind Docker/proxies).
 MARIMO_PUBLIC_URL = os.environ.get("MARIMO_PUBLIC_URL", f"http://localhost:{MARIMO_PORT}")
+# Single-port mode serves the Marimo notebook in-process at CAPACITY_MOUNT on the
+# Gradio port, for hosts that expose only one port. It is on automatically on
+# Hugging Face Spaces (which sets SPACE_ID).
+SINGLE_PORT = os.environ.get("SINGLE_PORT", "").lower() in ("1", "true", "yes") or bool(
+    os.environ.get("SPACE_ID")
+)
+CAPACITY_MOUNT = "/capacity"
 
 # Manim configures root logging at INFO; keep Gradio's HTTP client quiet.
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -284,6 +293,9 @@ def launch_capacity_planner(design, current_path):
     global _marimo_proc
     require_services(design)
     design_path = persist_current(design, current_path)
+    if SINGLE_PORT:
+        url = f"{CAPACITY_MOUNT}/?design={quote(os.path.basename(design_path))}"
+        return design_path, capacity_html(design, design_path, url)
     _stop_marimo()
     deadline = time.time() + 10
     while _port_open(MARIMO_HOST, MARIMO_PORT) and time.time() < deadline:
@@ -307,13 +319,16 @@ def launch_capacity_planner(design, current_path):
     else:
         _stop_marimo()
         raise gr.Error("Marimo did not start within 60 seconds.")
-    url = MARIMO_PUBLIC_URL
-    html = (
-        f'<p>Capacity planner for <b>{design.title}</b> (design file <code>{design_path}</code>) '
+    return design_path, capacity_html(design, design_path, MARIMO_PUBLIC_URL)
+
+
+def capacity_html(design: SystemDesign, design_path: str, url: str) -> str:
+    title, path, url = html.escape(design.title), html.escape(design_path), html.escape(url, quote=True)
+    return (
+        f'<p>Capacity planner for <b>{title}</b> (design file <code>{path}</code>) '
         f'is running at <a href="{url}" target="_blank">{url}</a> — open it in a new tab if the frame below is blank.</p>'
         f'<iframe src="{url}" style="width:100%;height:820px;border:1px solid #ccc;border-radius:6px;"></iframe>'
     )
-    return design_path, html
 
 
 # ---------------------------------------------------------------------------
@@ -397,11 +412,13 @@ def build_app() -> gr.Blocks:
 
         with gr.Tab("Capacity Planner"):
             gr.Markdown(
-                "Launches the Marimo notebook `capacity_notebook.py` as a background server "
-                f"on port {MARIMO_PORT}, pointed at the current design (saved to YAML first)."
+                "Opens the Marimo notebook `capacity_notebook.py` "
+                + (f"(served at `{CAPACITY_MOUNT}/` on this server)" if SINGLE_PORT
+                   else f"as a background server on port {MARIMO_PORT}")
+                + ", pointed at the current design (saved to YAML first)."
             )
             capacity_btn = gr.Button("Launch capacity planner", variant="primary")
-            capacity_html = gr.HTML()
+            capacity_frame = gr.HTML()
 
         with gr.Tab("Animation"):
             with gr.Row():
@@ -425,15 +442,31 @@ def build_app() -> gr.Blocks:
 
         diagram_btn.click(generate_diagram, design_state, [diagram_img, diagram_status])
         data_btn.click(generate_data, [design_state, rows_input], [db_state, data_status])
-        capacity_btn.click(launch_capacity_planner, [design_state, path_state], [path_state, capacity_html])
+        capacity_btn.click(launch_capacity_planner, [design_state, path_state], [path_state, capacity_frame])
         anim_btn.click(render_animation, [design_state, quality_radio], [anim_video, anim_status])
     return demo
 
 
+def serve_single_port() -> None:
+    """Serve Gradio at / and the Marimo notebook at CAPACITY_MOUNT on one port."""
+    import marimo
+    import uvicorn
+    from fastapi import FastAPI
+
+    server = FastAPI()
+    notebook_app = marimo.create_asgi_app(quiet=True).with_app(path="", root=NOTEBOOK_PATH).build()
+    server.mount(CAPACITY_MOUNT, notebook_app)
+    server = gr.mount_gradio_app(server, build_app(), path="/", allowed_paths=[OUTPUT_DIR])
+    uvicorn.run(server, host=GRADIO_HOST, port=GRADIO_PORT)
+
+
 if __name__ == "__main__":
-    signal.signal(signal.SIGTERM, _exit_on_sigterm)
-    build_app().launch(
-        server_name=GRADIO_HOST,
-        server_port=GRADIO_PORT,
-        allowed_paths=[OUTPUT_DIR],
-    )
+    if SINGLE_PORT:
+        serve_single_port()
+    else:
+        signal.signal(signal.SIGTERM, _exit_on_sigterm)
+        build_app().launch(
+            server_name=GRADIO_HOST,
+            server_port=GRADIO_PORT,
+            allowed_paths=[OUTPUT_DIR],
+        )

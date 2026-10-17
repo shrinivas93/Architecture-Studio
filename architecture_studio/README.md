@@ -1,3 +1,14 @@
+---
+title: Architecture Studio
+emoji: 🏗️
+colorFrom: blue
+colorTo: purple
+sdk: docker
+app_port: 7860
+pinned: false
+short_description: One system design to diagram, data, capacity and animation
+---
+
 # Architecture Studio
 
 Software architects usually design and communicate a system with several separate, disconnected tools: one to draw the architecture, another to generate test data, a spreadsheet for capacity and cost math, and often nothing at all to walk a reviewer through how a request flows through the system. Because each one is maintained by hand, they drift out of sync. Architecture Studio fixes this. You define the system **once**, in a single shared Pydantic model (`model.py`). The architecture diagram (Diagrams), the test data (Faker → SQLite), the capacity and cost numbers (Marimo) and the request-flow animation (Manim) are all generated from that one definition, inside one Gradio UI, so they can never disagree with each other.
@@ -91,11 +102,31 @@ docker compose up --build
 | `MARIMO_HOST` | `127.0.0.1` (`0.0.0.0` in Docker) | Marimo bind address |
 | `MARIMO_PORT` | `2718` | Marimo port |
 | `MARIMO_PUBLIC_URL` | `http://localhost:2718` | URL the **browser** uses for the embedded planner |
+| `SINGLE_PORT` | off (on automatically when `SPACE_ID` is set, i.e. on Hugging Face Spaces) | Serve the planner in-process at `/capacity/` on the Gradio port instead of starting a separate Marimo server |
+
+## Deploy for free on Hugging Face Spaces
+
+The header at the top of this README (`sdk: docker`, `app_port: 7860`) is the Spaces configuration, so this folder deploys as-is.
+
+1. Sign up at <https://huggingface.co>, then create a **New Space**: SDK **Docker**, template **Blank**, hardware **CPU basic (free)**.
+2. Create an access token with **write** permission under **Settings → Access Tokens**.
+3. Push the contents of this folder (not the repo root) to the Space. Use your token as the password:
+
+   ```bash
+   git clone https://huggingface.co/spaces/<your-username>/<space-name>
+   cp -r Architecture-Studio/architecture_studio/. <space-name>/
+   cd <space-name>
+   git add -A && git commit -m "Deploy Architecture Studio" && git push
+   ```
+
+4. The first build takes about 10–15 minutes (mostly LaTeX). Then open `https://huggingface.co/spaces/<your-username>/<space-name>`.
+
+On Spaces, the app switches to single-port mode by itself, because Spaces exposes only port 7860. The Capacity Planner tab then embeds the notebook from `/capacity/?design=<file>` on the same server; only file names inside `designs/` are accepted there. The image runs fine as the non-root user (uid 1000) that Spaces uses. Free Spaces sleep after a period of inactivity and wake on the next visit, and their disk is not persistent, so saved designs and generated files disappear when the Space restarts.
 
 ## Implementation choices
 
 - **Manim invocation: Python API, no CLI.** `animation_gen.render_request_flow` builds a `Scene` subclass from the design. It renders it in-process with `scene.render()` inside `manim.tempconfig({...})`, using `quality="low_quality"` (equivalent to `-ql`) by default and `"high_quality"` (`-qh`) for `quality="high"`. Rendering happens in a temporary media directory, and the mp4 is then moved to the requested path. Manim's config is process-global, so a lock serialises concurrent renders. Text is rendered with Pango (`Text`), so a working render needs only Cairo, Pango and ffmpeg. The LaTeX packages are installed because they are part of Manim's standard dependency set.
-- **Capacity planner embedding: iframe *and* link.** The "Launch capacity planner" button first writes the current design to YAML: the file it was loaded from or last saved to, or `designs/<title>.yaml` if it has never been saved. It then starts `python -m marimo run capacity_notebook.py --host … --port 2718 --headless --no-token -- --design <path>` as a background subprocess. It waits for the port to open and renders a `gr.HTML` block containing an `<iframe>` of `MARIMO_PUBLIC_URL`, plus a clickable link to the same URL as a fallback. `marimo run` sends no `X-Frame-Options` header, so the iframe works. Clicking the button again restarts Marimo on the latest design. The subprocess is terminated when the app exits.
+- **Capacity planner embedding: iframe *and* link.** The "Launch capacity planner" button first writes the current design to YAML: the file it was loaded from or last saved to, or `designs/<title>.yaml` if it has never been saved. It then starts `python -m marimo run capacity_notebook.py --host … --port 2718 --headless --no-token -- --design <path>` as a background subprocess. It waits for the port to open and renders a `gr.HTML` block containing an `<iframe>` of `MARIMO_PUBLIC_URL`, plus a clickable link to the same URL as a fallback. `marimo run` sends no `X-Frame-Options` header, so the iframe works. Clicking the button again restarts Marimo on the latest design. The subprocess is terminated when the app exits. In single-port mode (see below), Marimo is mounted in-process instead via `marimo.create_asgi_app()`, next to Gradio on one FastAPI/uvicorn server.
 - **Diagram layout.** Services are added to a left-to-right (`direction="LR"`) Diagrams graph in `design.services` order. Clusters are created only for a kind that has more than 6 services; that kind gets one `Cluster`. A missing Graphviz `dot` executable raises `GraphvizNotInstalledError`, which tells you how to install it.
 - **Animation layout.** Boxes are placed left to right in topological order. Each service sits in a column given by its longest distance from an entry point, and services in the same column are stacked vertically so arrows never pass through boxes. Edges that point backwards (only possible in a cycle) are drawn as curved arrows. The animated path is found by a DFS from an entry point to a sink, preferring entry points that have outgoing connections.
 - **Capacity model** (`compute_capacity`): `total_rps = users × rpm / 60`, split equally across the entry points (services with no incoming connection). Traffic propagates in topological/BFS order. A service's incoming RPS is the sum of the RPS of every service with an edge into it, and every outgoing edge carries the full upstream RPS. Then `instances_needed = ceil(rps / max_throughput_rps)` and `monthly_cost_usd = instances × cost_per_hour_usd × 730`. In a cyclic design, services inside the cycle receive only the traffic arriving from outside it.

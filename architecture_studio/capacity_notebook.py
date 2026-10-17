@@ -89,6 +89,11 @@ def _(mo):
     _designs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "designs")
     _options = {os.path.basename(p): os.path.abspath(p) for p in list_saved_designs(_designs_dir)}
     _cli_design = mo.cli_args().get("design")
+    _query_design = mo.query_params().get("design")
+    if not _cli_design and _query_design:
+        # Single-port mode passes ?design=<file>; only files inside designs/ are allowed.
+        _candidate = os.path.join(_designs_dir, os.path.basename(str(_query_design)))
+        _cli_design = _candidate if os.path.isfile(_candidate) else None
     _default = None
     if _cli_design:
         _cli_design = os.path.abspath(str(_cli_design))
