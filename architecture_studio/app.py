@@ -476,6 +476,9 @@ def serve_single_port() -> None:
         server_port=GRADIO_PORT,
         allowed_paths=[OUTPUT_DIR],
         prevent_thread_lock=True,
+        # Gradio's SSR mode (on by default on Spaces) puts a Node proxy in front of
+        # Python that would answer /capacity itself; serve Python directly instead.
+        ssr_mode=False,
     )
     demo.app.router.routes.insert(0, Mount(CAPACITY_MOUNT, app=notebook_app))
     demo.block_thread()
